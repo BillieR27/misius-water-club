@@ -1,4 +1,3 @@
-
 import { useMemo, useState } from 'react';
 import { saveReport } from '../data.js';
 import {
@@ -144,9 +143,9 @@ export default function Report({ settings, tz, today, logs, userId }) {
           disabled={sent}
         />
 
-        <p className="rquote">
-          {report.bear || 'Your message will appear here...'}
-        </p>
+        {report.bear && (
+  <p className="rquote">“{report.bear}”</p>
+)}
 
         <p className="rlabel">A LITTLE MESSAGE FROM BILLIE 💌</p>
         <p className="rquote">“{BILLIE_SIGNOFF}”</p>
