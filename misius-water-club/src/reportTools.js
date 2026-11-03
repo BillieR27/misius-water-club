@@ -1,7 +1,8 @@
-// Builds the daily report (text + image) that Karol sends to Billie.
+
 import { fmt, pctOf, shortDate, timeIn } from './utils.js';
 
-export const BILLIE_SIGNOFF = "I'm proud of you, handsome. Keep taking care of yourself. Kisses from Thailand. 😘";
+export const BILLIE_SIGNOFF = "I'm happy you're taking care of yourself, handsome. Keep it up. Sending you a little kiss from me. NO MORE HEADACHE😘";
+
 
 export function statusFor(pct) {
   if (pct >= 100) return 'Goal reached! 🎉';
@@ -11,15 +12,44 @@ export function statusFor(pct) {
   return 'A fresh start tomorrow';
 }
 
-export function bearCommentFor(pct) {
-  if (pct >= 100) return 'You did it, Misiu! Champion bear approves. 🏆❤️';
-  if (pct >= 75) return "You did pretty well today, Misiu! But tomorrow we're going for 100%. ❤️";
-  if (pct >= 50) return 'More than halfway! Tomorrow we climb a little higher. ❤️';
-  if (pct >= 1) return 'A start is a start, Misiu! Tomorrow we go a little further. ❤️';
-  return "Tomorrow is a fresh page, Misiu. I'll be waiting with a tiny glass. ❤️";
+const NUDGES = {
+  almost: [
+    "So close, Misiu! A little more water tomorrow and you've got this. 💧",
+    "You were nearly there! Let's get that last little bit tomorrow. 🐻",
+    "Almost a hydration champion. One more push tomorrow! 💪",
+  ],
+  halfway: [
+    "Not quite there today, but that's okay. Tomorrow is another chance! ❤️",
+    "Halfway is still progress. Let's aim a little higher tomorrow.",
+    "A little more water tomorrow, handsome. I believe in you!",
+  ],
+  low: [
+    "Looks like we need to work on that hydration, handsome. Be kind to yourself and try again tomorrow. 🐻",
+    "A small start today. Let's give your water bottle a little more attention tomorrow. 💧",
+    "Tomorrow's mission: drink a little more water. You've got this, Misiu!",
+  ],
+  none: [
+    "Misiu, your water bottle misses you. Let's give it some attention tomorrow. 😂",
+    "Your water bottle would like to see you more often. Just saying. 🥺",
+    "A fresh start tomorrow, Misiu. Let's get those first sips in!",
+  ],
+};
+
+export function nudgeFor(pct, date) {
+  if (pct >= 100) return '';
+
+  const group =
+    pct >= 75 ? NUDGES.almost :
+    pct >= 50 ? NUDGES.halfway :
+    pct >= 1 ? NUDGES.low :
+    NUDGES.none;
+
+  const day = Number(String(date).slice(-2)) || 1;
+  return group[(day - 1) % group.length];
 }
 
-export function buildReport({ date, total, goal, logs, tz }) {
+
+export function buildReport({ date, total, goal, logs, tz, bearMessage = '' }) {
   const pct = pctOf(total, goal);
   const sorted = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at));
   return {
@@ -30,7 +60,8 @@ export function buildReport({ date, total, goal, logs, tz }) {
     pct,
     drinks: logs.length,
     status: statusFor(pct),
-    bear: bearCommentFor(pct),
+    nudge: nudgeFor(pct, date),
+    bear: bearMessage,
     billie: BILLIE_SIGNOFF,
     timeline: sorted.map((l) => ({ time: timeIn(l.logged_at, tz), ml: l.amount_ml })),
   };
@@ -49,13 +80,25 @@ export function buildReportText(r) {
     '',
     `Status: ${r.status}`,
   ];
+
   if (r.timeline.length) {
     lines.push('', 'Timeline:', ...r.timeline.map((t) => `${t.time} · ${t.ml} ml`));
   }
-  lines.push('', 'Message from your bear:', `'${r.bear}'`, '', 'A little message from Billie:', `'${r.billie}'`);
-  return lines.join('\n');
-}
 
+  lines.push(
+    '',
+    'A MESSAGE FROM MY BEAR 🐻',
+    r.bear || 'Your message will appear here...',
+    '',
+    'A LITTLE MESSAGE FROM BILLIE 💌',
+    r.billie
+  );
+
+  if (r.nudge) {
+    lines.push('', 'A LITTLE NUDGE FROM BILLIE 💧', r.nudge);
+  }
+   return lines.join('\n');
+}
 export function whatsappUrl(text, number) {
   const to = number ? String(number).replace(/\D/g, '') : '';
   return `https://wa.me/${to}?text=${encodeURIComponent(text)}`;
@@ -83,7 +126,6 @@ export async function copyText(text) {
   }
 }
 
-// ───────── Image export (canvas, no dependencies) ─────────
 function roundRect(x, px, py, w, h, r) {
   x.beginPath();
   x.moveTo(px + r, py);
@@ -126,9 +168,8 @@ export async function drawReportImage(r) {
       document.fonts.load('400 30px Nunito'),
       document.fonts.load('700 30px Nunito'),
     ]);
-  } catch {
-    /* fall back to system fonts */
-  }
+  } catch {}
+
   const W = 1080;
   const H = 1350;
   const c = document.createElement('canvas');
@@ -170,6 +211,7 @@ export async function drawReportImage(r) {
   x.fillStyle = 'rgba(255,255,255,0.15)';
   roundRect(x, bx, 395, bw, 28, 14);
   x.fill();
+
   const fillW = Math.max(0, Math.min(1, r.pct / 100)) * bw;
   if (fillW > 0) {
     const bg2 = x.createLinearGradient(bx, 0, bx + bw, 0);
@@ -186,6 +228,7 @@ export async function drawReportImage(r) {
     ['Drinks logged', String(r.drinks)],
     ['Status', r.status],
   ];
+
   rows.forEach(([k, v], i) => {
     const y = 495 + i * 52;
     x.textAlign = 'left';
@@ -204,6 +247,7 @@ export async function drawReportImage(r) {
   x.fillText('Timeline', 150, 735);
   x.fillStyle = '#fff6e9';
   x.font = `400 30px ${sans}`;
+
   if (!r.timeline.length) {
     x.fillText('No drinks logged yet', 150, 782);
   } else {
@@ -218,24 +262,47 @@ export async function drawReportImage(r) {
     items.forEach((s, i) => x.fillText(s, i % 2 ? 580 : 150, 782 + Math.floor(i / 2) * 42));
   }
 
+
   x.textAlign = 'center';
+
+  // Bear's message
   x.fillStyle = '#ffc2d6';
   x.font = `700 28px ${sans}`;
-  x.fillText('Message from your bear', W / 2, 985);
-  x.fillStyle = '#fff6e9';
-  x.font = `400 30px ${sans}`;
-  wrap(x, r.bear, 800).slice(0, 3).forEach((l, i) => x.fillText(l, W / 2, 1030 + i * 38));
+  x.fillText('A MESSAGE FROM MY BEAR 🐻', W / 2, 960);
 
+  x.fillStyle = '#fff6e9';
+  x.font = `400 28px ${sans}`;
+  wrap(x, r.bear || 'Your message will appear here...', 800)
+    .slice(0, 2)
+    .forEach((l, i) => x.fillText(l, W / 2, 1000 + i * 34));
+
+  // Billie's message
   x.fillStyle = '#cdb8ff';
   x.font = `700 28px ${sans}`;
-  x.fillText('A little message from Billie', W / 2, 1150);
+  x.fillText('A LITTLE MESSAGE FROM BILLIE 💌', W / 2, 1080);
+
   x.fillStyle = '#fff6e9';
-  x.font = `400 30px ${sans}`;
-  wrap(x, r.billie, 800).slice(0, 3).forEach((l, i) => x.fillText(l, W / 2, 1195 + i * 38));
+  x.font = `400 26px ${sans}`;
+  wrap(x, r.billie, 800)
+    .slice(0, 2)
+    .forEach((l, i) => x.fillText(l, W / 2, 1120 + i * 32));
+
+  // Gentle nudge, only when the goal isn't reached
+  if (r.nudge) {
+    x.fillStyle = '#a9d4ff';
+    x.font = `700 26px ${sans}`;
+    x.fillText('A LITTLE NUDGE FROM BILLIE 💧', W / 2, 1195);
+
+    x.fillStyle = '#fff6e9';
+    x.font = `400 25px ${sans}`;
+    wrap(x, r.nudge, 800)
+      .slice(0, 2)
+      .forEach((l, i) => x.fillText(l, W / 2, 1230 + i * 30));
+  }
 
   x.fillStyle = 'rgba(255,246,233,0.6)';
-  x.font = `400 24px ${sans}`;
-  x.fillText('Made with ❤️ w Tajlandii dla Polaka · ทำด้วยความรัก', W / 2, 1290);
+  x.font = `400 20px ${sans}`;
+  x.fillText('Made with ❤️ w Tajlandii dla Polaka · ทำด้วยความรัก', W / 2, 1300);
 
   return new Promise((res) => c.toBlob(res, 'image/png'));
 }
