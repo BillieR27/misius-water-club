@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { deviceTz, validTz } from '../utils.js';
+import { supabase } from '../supabase.js';
 
 const COMMON_TZ = [
   'Europe/Warsaw', 'Europe/London', 'Europe/Berlin', 'Europe/Paris', 'Europe/Madrid', 'Europe/Rome', 'Europe/Kyiv',
@@ -27,11 +28,20 @@ function deviceStatus() {
   return { supported, standalone, ios, permission: supported ? Notification.permission : 'unsupported' };
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+
 export default function Settings({ settings, email, onSave, onSignOut }) {
   const [d, setD] = useState(() => toDraft(settings));
   const [busy, setBusy] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [pushMsg, setPushMsg] = useState('');
   const [dev, setDev] = useState(deviceStatus);
 
   useEffect(() => setD(toDraft(settings)), [settings]);
@@ -79,13 +89,76 @@ export default function Settings({ settings, email, onSave, onSignOut }) {
     setBusy(false);
   }
 
+  async function registerDevice() {
+    setPushBusy(true);
+    setPushMsg('');
+    try {
+      const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      if (!publicKey) throw new Error('The VAPID public key is missing from the app settings.');
+
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        throw new Error('Push notifications are not supported by this browser.');
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+      }
+
+      const { data, error } = await supabase.functions.invoke('hydration-push', {
+        body: {
+          action: 'subscribe',
+          subscription: subscription.toJSON(),
+        },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setPushMsg('This device is registered for notifications ✓');
+      setDev(deviceStatus());
+    } catch (ex) {
+      setPushMsg(ex.message || "Couldn't register this device. Please try again.");
+    }
+    setPushBusy(false);
+  }
+
   async function ask() {
     try {
-      await Notification.requestPermission();
-    } catch {
-      /* ignore */
+      const permission = await Notification.requestPermission();
+      setDev(deviceStatus());
+
+      if (permission === 'granted') {
+        await registerDevice();
+      } else {
+        setPushMsg('Notifications were not allowed on this device.');
+      }
+    } catch (ex) {
+      setPushMsg(ex.message || "Couldn't request notification permission.");
     }
-    setDev(deviceStatus());
+  }
+
+  async function testNotification() {
+    setPushBusy(true);
+    setPushMsg('');
+    try {
+      const { data, error } = await supabase.functions.invoke('hydration-push', {
+        body: { action: 'test' },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setPushMsg(`Test sent! ${data.sent} notification(s) sent. Check your device. 💧`);
+    } catch (ex) {
+      setPushMsg(ex.message || "Couldn't send the test notification.");
+    }
+    setPushBusy(false);
   }
 
   let notifLine;
@@ -149,10 +222,26 @@ export default function Settings({ settings, email, onSave, onSignOut }) {
           </div>
         </div>
         <p className="fine">{notifLine}</p>
+
         {dev.supported && dev.permission === 'default' && !(dev.ios && !dev.standalone) && (
-          <button type="button" className="btn small" onClick={ask}>Allow notifications</button>
+          <button type="button" className="btn small" onClick={ask} disabled={pushBusy}>
+            {pushBusy ? 'Please wait…' : 'Allow notifications'}
+          </button>
         )}
-        <p className="fine">Your reminder choices are saved now. Sending the actual reminders arrives in the next update, and delivery is never 100% guaranteed (phones can delay or silence notifications).</p>
+
+        {dev.permission === 'granted' && (
+          <div className="share">
+            <button type="button" className="btn small" onClick={registerDevice} disabled={pushBusy}>
+              {pushBusy ? 'Please wait…' : 'Register this device'}
+            </button>
+            <button type="button" className="btn small" onClick={testNotification} disabled={pushBusy}>
+              Send test notification
+            </button>
+          </div>
+        )}
+
+        {pushMsg && <p className="fine">{pushMsg}</p>}
+        <p className="fine">Notifications can be delayed or silenced by your browser or device. Keep this app installed or available in your browser to receive them.</p>
       </section>
 
       {hasWa && (
