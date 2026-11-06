@@ -93,12 +93,21 @@ export default function Settings({ settings, email, onSave, onSignOut }) {
     setPushBusy(true);
     setPushMsg('');
     try {
-      const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-      if (!publicKey) throw new Error('The VAPID public key is missing from the app settings.');
+      const { data: { session } } = await supabase.auth.getSession();
 
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        throw new Error('Push notifications are not supported by this browser.');
-      }
+if (!session) {
+  throw new Error('Please sign in again before registering this device.');
+}
+
+const { data, error } = await supabase.functions.invoke('hydration-push', {
+  body: {
+    action: 'subscribe',
+    subscription: subscription.toJSON(),
+  },
+  headers: {
+    Authorization: `Bearer ${session.access_token}`,
+  },
+});
 
       const registration = await navigator.serviceWorker.ready;
       let subscription = await registration.pushManager.getSubscription();
